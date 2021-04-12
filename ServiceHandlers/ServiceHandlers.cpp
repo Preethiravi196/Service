@@ -2,7 +2,7 @@
 #include <iostream>
 #include <atlstr.h>
 #include <strsafe.h>
-#include "logger.h"
+#include <Logger.cpp>
 
 using namespace std;
 
@@ -11,18 +11,21 @@ class ServiceHandlers
 private:
 	SC_HANDLE schSCManager;
 	SC_HANDLE schService;
-
+	CLogger* LOGGER;
+	
 public:
 
 	ServiceHandlers()
 	{
 		schSCManager = NULL;
 		schService = NULL;
+		LOGGER = NULL;		
 	}
-
+	
 	ServiceHandlers(LPWSTR SERVICE_NAME)
 	{
-		//LOGGER->SetFilename("ServiceHandlers.txt");
+		LOGGER = CLogger::GetLogger("ServiceHandlers.txt");
+
 		// Get a handle to the database
 		schSCManager = OpenSCManager(
 			NULL,                   
@@ -34,10 +37,9 @@ public:
 			schSCManager,            
 			SERVICE_NAME,               
 			SC_MANAGER_ALL_ACCESS | SERVICE_USER_DEFINED_CONTROL );  
-
 	}
 
-	VOID Close_Handlers()
+	VOID CloseHandlers()
 	{
 		CloseServiceHandle(schSCManager);
 		LOGGER->Log("Service Control Manager handle is closed");
@@ -46,25 +48,25 @@ public:
 		LOGGER->Log("Service handle is closed");
 	}
 
-	BOOL check_handlers()
+	BOOL Checkhandlers()
 	{
 		if (NULL == schSCManager)
 		{
-			LOGGER->Log("Open SCManager failed in check handler ");
+			LOGGER->Log("Open SCManager failed in check handler. Error: %d ", GetLastError());
 			return FALSE;
 		}
 		else
 		{
-			LOGGER->Log("Open SCManager success in check handler");
+			LOGGER->Log("Open SCManager success in check handler.");
 		}
 		if (schService == NULL)
 		{
-			LOGGER->Log("Open Service failed in check handler ");
+			LOGGER->Log("Open Service failed in check handler. Error: %d ", GetLastError());
 			return FALSE;
 		}
 		else
 		{
-			LOGGER->Log("Open Service success in check handler");
+			LOGGER->Log("Open Service success in check handler.");
 		}
 		return TRUE;
 	}
@@ -93,6 +95,7 @@ public:
 
 	BOOL DoUpdateSvcDesc()
 	{
+		LOGGER->Log("DoUpdateSvcDesc is triggered");
 		SERVICE_DESCRIPTION sd;
 
 		string str = "This is a test description";
@@ -107,7 +110,7 @@ public:
 			SERVICE_CONFIG_DESCRIPTION, // change: description
 			&sd))                      // new description
 		{
-			LOGGER->Log("ChangeServiceConfig2 failed in update description ");
+			LOGGER->Log("ChangeServiceConfig2 failed in update description. Error: %d ", GetLastError());
 			return FALSE;
 		}
 		else
@@ -117,8 +120,17 @@ public:
 		}
 	}
 
+	BOOL DoStopSvc()
+	{
+		LOGGER->Log("DoStopSvc is triggered");
+		SERVICE_STATUS status;
+		return  ControlService(get_service_handle(), SERVICE_CONTROL_STOP, &status);;
+	}
+
 	BOOL DoQuerySvc()
 	{
+		LOGGER->Log("DoQuerySvc is triggered");
+
 		LPQUERY_SERVICE_CONFIG lpsc = NULL;
 		LPSERVICE_DESCRIPTION lpsd = NULL;
 		DWORD dwBytesNeeded, cbBufSize, dwError;
@@ -130,6 +142,7 @@ public:
 			0,
 			&dwBytesNeeded))
 		{
+			//use GetlastError in error log
 			dwError = GetLastError();
 			if (ERROR_INSUFFICIENT_BUFFER == dwError)
 			{
@@ -138,7 +151,7 @@ public:
 			}
 			else
 			{
-				LOGGER->Log("QueryServiceConfig of configuration information failed in query ");
+				LOGGER->Log("QueryServiceConfig of configuration information failed in query. Error: %d ", GetLastError());
 				return FALSE;
 			}
 		}
@@ -149,7 +162,7 @@ public:
 			cbBufSize,
 			&dwBytesNeeded))
 		{
-			LOGGER->Log("QueryServiceConfig of configuration information failed in query");
+			LOGGER->Log("QueryServiceConfig of configuration information failed in query. Error: %d ", GetLastError());
 			return FALSE;
 		}
 
@@ -169,7 +182,7 @@ public:
 			}
 			else
 			{
-				LOGGER->Log("QueryServiceConfig of description failed in query");
+				LOGGER->Log("QueryServiceConfig of description failed in query. Error: %d ", GetLastError());
 				return FALSE;
 			}
 		}
@@ -181,7 +194,7 @@ public:
 			cbBufSize,
 			&dwBytesNeeded))
 		{
-			LOGGER->Log("QueryServiceConfig of description failed in query");
+			LOGGER->Log("QueryServiceConfig of description failed in query. Error: %d ", GetLastError());
 			return FALSE;
 		}
 
@@ -219,6 +232,18 @@ public:
 		LocalFree(lpsd);
 	}
 
+	BOOL DoUserDefinedControl()
+	{
+		LOGGER->Log("DoUserDefinedControl is triggered");
+		SERVICE_STATUS status;
+		return ControlService(get_service_handle(), SERVICE_CONTROL_CUSTOM_MESSAGE, &status);
+	}
+
+	~ServiceHandlers()
+	{
+		CloseHandlers();
+	}
+
 };
 
 int _tmain(int argc, TCHAR* argv[])
@@ -235,26 +260,26 @@ int _tmain(int argc, TCHAR* argv[])
 
 		ServiceHandlers object(szSvcName);
 
-		if (object.check_handlers())
+		if (object.Checkhandlers())
 		{
 			if (lstrcmpi(szCommand, TEXT("query")) == 0)
 			{
 				result = object.DoQuerySvc();
 				object.DisplayMessage(result, "Query ", GetLastError());
 			}
-			else if (lstrcmpi(argv[1], TEXT("update")) == 0)
+			else if (lstrcmpi(szCommand, TEXT("update")) == 0)
 			{
 				result = object.DoUpdateSvcDesc();
 				object.DisplayMessage(result, "Update description ", GetLastError());
 			}
-			else if (lstrcmpi(argv[1], TEXT("stop")) == 0)
+			else if (lstrcmpi(szCommand, TEXT("stop")) == 0)
 			{
-				result = ControlService(object.get_service_handle(), SERVICE_CONTROL_STOP, &status);
+				result = object.DoStopSvc();
 				object.DisplayMessage(result, "Stop ", GetLastError());
 			}
-			else if (lstrcmpi(argv[1], TEXT("user")) == 0)
+			else if (lstrcmpi(szCommand, TEXT("user")) == 0)
 			{
-				result = ControlService(object.get_service_handle(), SERVICE_CONTROL_CUSTOM_MESSAGE, &status);
+				result = object.DoUserDefinedControl();
 				object.DisplayMessage(result, "User Control Service ", GetLastError());
 			}
 			else
@@ -262,8 +287,6 @@ int _tmain(int argc, TCHAR* argv[])
 				cout << "Invalid command!!";
 			}
 		}
-
-		object.Close_Handlers();	
 	}
 	return 0;
 }

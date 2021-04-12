@@ -2,15 +2,17 @@
 #include <iostream>
 #include <atlstr.h>
 #include <wtsapi32.h>
-#include "logger.h"
+#include <Logger.cpp>
 
 using namespace std;
+
+CLogger* LOGGER = CLogger::GetLogger("Service.txt");
 
 #define SERVICE_NAME  _T("Sample")
 
 SERVICE_STATUS        g_ServiceStatus = { 0 };
 SERVICE_STATUS_HANDLE g_StatusHandle = NULL;
-HANDLE                g_ServiceStopEvent = NULL ;
+HANDLE                g_ServiceStopEvent = NULL;
 
 DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
 {
@@ -23,11 +25,31 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam)
 	return ERROR_SUCCESS;
 }
 
-VOID LaunchNotepad()
+VOID Get_User_Name(DWORD dwSessionId)
 {
-	//convert to method launch path
-	LPCWSTR path = L"C:\\Windows\\System32\\notepad.exe";
+	LPTSTR szUserName = NULL;
+	DWORD dwLen = 0 ;
+	BOOL bStatus;
 
+	bStatus = WTSQuerySessionInformation(WTS_CURRENT_SERVER_HANDLE, dwSessionId, WTSUserName, &szUserName, &dwLen);
+
+	if (bStatus)
+	{
+		wstring wstr = L"Current username is: " ;
+		wstr = wstr + szUserName;
+		std::string str(wstr.begin(), wstr.end());
+
+		LOGGER->Log(str);
+		WTSFreeMemory(szUserName);
+	}
+	else
+	{
+		LOGGER->Log("Error in Get_User_Name: %d",GetLastError());
+	}
+}
+
+BOOL LaunchApplication(LPCWSTR path)
+{
 	PROCESS_INFORMATION pi;
 	STARTUPINFO si;
 	HANDLE htoken;
@@ -35,27 +57,27 @@ VOID LaunchNotepad()
 
 	ZeroMemory(&si, sizeof(si));
 	si.cb = sizeof(si);
-
+	
 	sessionId = WTSGetActiveConsoleSessionId();
-	WTSQueryUserToken(sessionId, &htoken);
 
-	WTS_INFO_CLASS WTSInfoClass;
-
-	ZeroMemory(&WTSInfoClass, sizeof(WTSInfoClass));
-
-	DWORD bytesReturned = 0;
-	LPSTR pData = NULL;
-
-	WTSQuerySessionInformationA(WTS_CURRENT_SERVER_HANDLE,sessionId, WTSInfoClass, &pData, &bytesReturned);
-
-	//LOGGER->Log("Current Username: %s ", WTSInfoClass);
-	si.wShowWindow = TRUE;
-
-	if (CreateProcessAsUser(htoken, path, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+	if (WTSQueryUserToken(sessionId, &htoken))
 	{
-		WaitForSingleObject(pi.hProcess, INFINITE);
-		CloseHandle(pi.hThread);
-		CloseHandle(pi.hProcess);
+		Get_User_Name(sessionId);
+
+		si.wShowWindow = TRUE;
+
+		if (CreateProcessAsUser(htoken, path, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+		{
+			LOGGER->Log("Notepad opened successfully!!");
+			CloseHandle(pi.hThread);
+			CloseHandle(pi.hProcess);
+			return TRUE;
+		}
+	}
+	else
+	{
+		LOGGER->Log("Error in WTSQueryUserToken: %d", GetLastError());
+		return FALSE;
 	}
 
 	CloseHandle(htoken);
@@ -83,23 +105,30 @@ VOID UserDefinedControl()
 	{
 		if (ucpResponse == 6)
 		{
-			LaunchNotepad();
+			if (LaunchApplication(L"C:\\Windows\\System32\\notepad.exe"))
+			{
+				LOGGER->Log("WTSSendMessage success in user defined control ");
+			}
+			else
+			{
+				LOGGER->Log("LaunchApplication failed in user defined control. Error: %d ", GetLastError());
+			}
 		}
-		LOGGER->Log("WTSSendMessage success in user defined control ");
+		
 	}
 	else
 	{
-		LOGGER->Log("WTSSendMessage failed in user defined control ");
+		LOGGER->Log("WTSSendMessage failed in user defined control. Error: %d ",GetLastError());
 	}
-	
-}				
-			
+}
+
 VOID Stop()
 {
 	LOGGER->Log("SERVICE_CONTROL_STOP is triggered");
-
-	if (g_ServiceStatus.dwCurrentState != SERVICE_RUNNING)
+	
+	if (g_ServiceStatus.dwCurrentState == SERVICE_STOPPED)
 	{
+		LOGGER->Log("Service already been stopped");
 		return;
 	}
 	g_ServiceStatus.dwControlsAccepted = 0;
@@ -108,7 +137,7 @@ VOID Stop()
 	g_ServiceStatus.dwCheckPoint = 4;
 	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
 	{
-		LOGGER->Log( " ServiceCtrlHandler: SetServiceStatus returned error in stop");
+		LOGGER->Log(" ServiceCtrlHandler: SetServiceStatus returned error in stop. Error: %d ", GetLastError());
 	}
 	// This will signal the worker thread to start shutting down
 	SetEvent(g_ServiceStopEvent);
@@ -143,12 +172,7 @@ VOID WINAPI ServiceCtrlHandler(DWORD CtrlCode)
 		LOGGER->Log("SERVICE_CONTROL_SHUTDOWN is triggered");
 		break;
 	}
-	case SERVICE_CONTROL_SESSIONCHANGE:
-	{
-		LOGGER->Log("SERVICE_CONTROL_SESSIONCHANGE is triggered");
-		break;
-	}
-	case SERVICE_CONTROL_USERMODEREBOOT :
+	case SERVICE_CONTROL_USERMODEREBOOT:
 	{
 		LOGGER->Log("SERVICE_CONTROL_USERMODEREBOOT is triggered");
 		break;
@@ -167,8 +191,10 @@ VOID WINAPI ServiceCtrlHandler(DWORD CtrlCode)
 
 VOID WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 {
-	DWORD Status = NULL ;
-	
+	DWORD Status = NULL;
+
+	g_StatusHandle = RegisterServiceCtrlHandler(SERVICE_NAME, ServiceCtrlHandler);
+
 	// Tell the service controller we are starting
 	ZeroMemory(&g_ServiceStatus, sizeof(g_ServiceStatus));
 	g_ServiceStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
@@ -178,8 +204,6 @@ VOID WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 	g_ServiceStatus.dwServiceSpecificExitCode = 0;
 	g_ServiceStatus.dwCheckPoint = 0;
 
-	g_StatusHandle = RegisterServiceCtrlHandler(SERVICE_NAME, ServiceCtrlHandler);
-
 	if (g_StatusHandle == NULL)
 	{
 		return;
@@ -187,7 +211,7 @@ VOID WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 
 	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
 	{
-		LOGGER->Log("ServiceMain: SetServiceStatus returned error ");
+		LOGGER->Log("ServiceMain: SetServiceStatus returned error. Error: %d ", GetLastError());
 	}
 
 	// Create a service stop event to wait on later
@@ -204,7 +228,7 @@ VOID WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 
 		if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
 		{
-			LOGGER->Log("ServiceMain: SetServiceStatus returned error");
+			LOGGER->Log("ServiceMain: SetServiceStatus returned error. Error: %d ", GetLastError());
 		}
 		return;
 	}
@@ -216,14 +240,14 @@ VOID WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 
 	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
 	{
-		LOGGER->Log("ServiceMain: SetServiceStatus returned error") ;
+		LOGGER->Log("ServiceMain: SetServiceStatus returned error. Error: %d ", GetLastError());
 	}
 
 	HANDLE hThread = CreateThread(NULL, 0, ServiceWorkerThread, NULL, 0, NULL);
 
 	// Wait until our worker thread exits signaling that the service needs to stop
 	WaitForSingleObject(hThread, INFINITE);
-	
+
 	CloseHandle(hThread);
 	CloseHandle(g_ServiceStopEvent);
 
@@ -235,12 +259,12 @@ VOID WINAPI ServiceMain(DWORD argc, LPTSTR* argv)
 
 	if (SetServiceStatus(g_StatusHandle, &g_ServiceStatus) == FALSE)
 	{
-		LOGGER->Log("ServiceMain: SetServiceStatus returned error");
+		LOGGER->Log("ServiceMain: SetServiceStatus returned error. Error: %d ", GetLastError());
 	}
 }
 
 int main(int argc, TCHAR* argv[])
-{	
+{
 	SERVICE_TABLE_ENTRY ServiceTable[] =
 	{
 		{(LPWSTR)SERVICE_NAME, (LPSERVICE_MAIN_FUNCTION)ServiceMain},
@@ -251,7 +275,7 @@ int main(int argc, TCHAR* argv[])
 	{
 		return GetLastError();
 	}
-	
+
 	return 0;
 }
 

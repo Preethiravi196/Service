@@ -1,26 +1,28 @@
-#include "Logger.h"
+#include "logger.h"
 #include "Utilities.h"
 
-const string CLogger::m_sFileName = "ServiceHandlers.txt" ;
+string CLogger::m_sFileName;
 CLogger* CLogger::m_pThis = NULL;
 ofstream CLogger::m_Logfile;
 
-CLogger::CLogger()
+CLogger::CLogger(string filename)
 {
-   
+    m_sFileName = filename;
 }
 
-void CLogger::SetFilename(const string& file)
+CLogger* CLogger::GetLogger(string filename)
 {
-    m_sFileName = file;
-}
-
-CLogger* CLogger::GetLogger() {
     if (m_pThis == NULL) {
-        m_pThis = new CLogger();
+        m_pThis = new CLogger(filename);
         m_Logfile.open(m_sFileName.c_str(), ios::out | ios::app);
     }
     return m_pThis;
+}
+
+void CLogger::Log(const string& sMessage)
+{
+    m_Logfile << Util::CurrentDateTime() << ":\t";
+    m_Logfile << sMessage << "\n";
 }
 
 void CLogger::Log(const char* format, ...)
@@ -40,12 +42,6 @@ void CLogger::Log(const char* format, ...)
     va_end(args);
 
     delete[] sMessage;
-}
-
-void CLogger::Log(const string& sMessage)
-{
-    m_Logfile << Util::CurrentDateTime() << ":\t";
-    m_Logfile << sMessage << "\n";
 }
 
 CLogger& CLogger::operator<<(const string& sMessage)

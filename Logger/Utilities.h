@@ -1,6 +1,3 @@
-#ifndef UTILITIES_H
-#define UTILITIES_H
-
 #include <iostream>
 #include <string>
 #include <time.h>
@@ -18,4 +15,3 @@ namespace Util
         return buf;
     }
 }
-#endif
